@@ -1,61 +1,71 @@
-//esp32_wiibb_oled.ino 2022/03/01
+#include <WiFi.h>
+#include <HTTPClient.h>
 #include "Wiimote.h"
 #include <Wire.h>
 #include <M5StickC.h>
 
+// Wi-Fi配置
+const char* ssid = "wifissid";
+const char* password = "Wi-Fi密码";
+
+// Mastodon配置
+const char* mastodonHost = "https://「正确的域名」/api/v1/statuses";
+const char* accessToken = "mastodon tonken";
+
 #define LED        2
 
+// 其他全局变量
 Wiimote wiimote;
 char w_kg[10];
-float tr,br,tl,bl,total;
-int button_A=0;
-float w_off=0.0;
+float tr, br, tl, bl, total;
+int button_A = 0;
+float w_off = 0.0;
 float wt;
-int cal=0;
-//**********************************************************************************************
-//文字列をビデオに表示する
-void disp(int16_t x,int16_t y,int16_t textsize,uint16_t color,String msg){
-  M5.Lcd.setCursor(x, y);
-  M5.Lcd.setTextSize(textsize);
-  M5.Lcd.setTextColor(color);
-  M5.Lcd.print(msg);
+int cal = 0;
+float lastWt = 0.0;  // 用于存储上一次的体重值
+
+// 连接Wi-Fi的函数
+void connectToWiFi() {
+    WiFi.begin(ssid, password);
+    while (WiFi.status() != WL_CONNECTED) {
+        delay(1000);
+        Serial.println("Connecting to WiFi...");
+    }
+    Serial.println("Connected to WiFi");
 }
 
+// 将数据发送到Mastodon的函数
+void postToMastodon(String message) {
+    if (WiFi.status() == WL_CONNECTED) {
+        HTTPClient http;
+        http.begin(mastodonHost);
+        http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+        http.addHeader("Authorization", "Bearer " + String(accessToken));
 
-//**********************************************************************************************
-void setup() {
-  // Initialize the M5StickC object
-  M5.begin();
-  M5.Lcd.setRotation(1);
+        String httpRequestData = "status=" + message;
+        int httpResponseCode = http.POST(httpRequestData);
 
-  pinMode(LED, OUTPUT);
-  Serial.begin(115200);
-  while ( !Serial ) delay(100);
-  for(int i=0;i<5;i++) {
-    digitalWrite(LED, HIGH);
-    delay(300);
-    digitalWrite(LED, LOW);
-    delay(300);
-  }
-  wiimote.init(wiimote_callback);
- }
-//**********************************************************************************************
-void loop() {
-  M5.update();
-  wiimote.handle();
-  if (button_A) {
-    w_off=total;
-    cal=1;
-  }
-  wt=total-w_off;
-  if (wt<0.5) wt=0.0;
-  sprintf(w_kg,"%2.1f",wt);
-  M5.Lcd.fillScreen(BLACK);   //画面をクリア
-  disp(1,2,1,GREEN ,(String)"M5StickC & WiiBB");
-  disp(  8,15,3,CYAN,(char *)w_kg);
-  disp(110,15,1,CYAN,(char *)"kg");
-  if(!cal) disp(80,30,2,CYAN,(char *)"CAL");
-  delay(100);
+        if (httpResponseCode > 0) {
+            Serial.println("Data posted to Mastodon");
+        }
+        else {
+            Serial.print("Error on sending POST: ");
+            Serial.println(httpResponseCode);
+        }
+
+        http.end();
+    }
+    else {
+        Serial.println("WiFi not connected");
+    }
+}
+
+// 显示信息的函数
+void disp(int16_t x, int16_t y, int16_t textsize, uint16_t color, String msg) {
+    M5.Lcd.setCursor(x, y);
+    M5.Lcd.setTextSize(textsize);
+    M5.Lcd.setTextColor(color);
+    M5.Lcd.print(msg);
 }
 
 void wiimote_callback(wiimote_event_type_t event_type, uint16_t handle, uint8_t *data, size_t len) {
@@ -147,5 +157,54 @@ void wiimote_callback(wiimote_event_type_t event_type, uint16_t handle, uint8_t 
   }else{
     printf("  event_type=%d\n", event_type);
   }
+  delay(100);
+}
+
+void setup() {
+    // M5StickC初始化
+    M5.begin();
+    M5.Lcd.setRotation(1);
+
+    pinMode(LED, OUTPUT);
+    Serial.begin(115200);
+    while (!Serial) delay(100);
+    for (int i = 0; i < 5; i++) {
+        digitalWrite(LED, HIGH);
+        delay(300);
+        digitalWrite(LED, LOW);
+        delay(300);
+    }
+    wiimote.init(wiimote_callback);
+
+    // 连接到Wi-Fi
+    connectToWiFi();
+}
+
+void loop() {
+  M5.update();
+  wiimote.handle();
+
+  if (button_A) {
+    w_off = total;
+    cal = 1;
+  }
+
+  wt = total - w_off;
+  if (wt < 0.5) wt = 0.0;
+  sprintf(w_kg, "%2.1f", wt);
+
+  M5.Lcd.fillScreen(BLACK);   // 清空屏幕
+  disp(1, 2, 1, GREEN, (String)"M5StickC & WiiBB");
+  disp(8, 15, 3, CYAN, (char *)w_kg);
+  disp(110, 15, 1, CYAN, (char *)"kg");
+  if (!cal) disp(80, 30, 2, CYAN, (char *)"CAL");
+
+  // 发送数据到Mastodon的条件判断
+  if (wt != lastWt) {  // 如果当前体重和上一次体重不同
+    lastWt = wt;  // 更新上一次的体重值
+    String message = "体重: " + String(wt) + " kg";
+    postToMastodon(message);
+  }
+
   delay(100);
 }
